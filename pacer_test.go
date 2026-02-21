@@ -6,6 +6,73 @@ import (
 	"time"
 )
 
+func TestDynamicPacerReserve(t *testing.T) {
+	windowStart := time.Unix(0, 0)
+
+	type testCase struct {
+		name             string
+		spread           bool
+		calls            []time.Duration
+		wantDelays       []time.Duration
+		wantRequestsDone int
+		wantLastRequest  time.Time
+		wantWindowStart  time.Time
+	}
+
+	cases := []testCase{
+		{
+			name:             "spread-true",
+			spread:           true,
+			calls:            []time.Duration{0, 1 * time.Second},
+			wantDelays:       []time.Duration{0, 8 * time.Second},
+			wantRequestsDone: 2,
+			wantLastRequest:  windowStart.Add(9 * time.Second),
+			wantWindowStart:  windowStart,
+		},
+		{
+			name:             "spread-false",
+			spread:           false,
+			calls:            []time.Duration{0, 1 * time.Second, 2 * time.Second},
+			wantDelays:       []time.Duration{0, 0, 8 * time.Second},
+			wantRequestsDone: 1,
+			wantLastRequest:  windowStart.Add(10 * time.Second),
+			wantWindowStart:  windowStart.Add(10 * time.Second),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pacer := &DynamicPacer{
+				windowSize:  10 * time.Second,
+				maxRequests: 2,
+				windowStart: windowStart,
+			}
+
+			if len(tc.calls) != len(tc.wantDelays) {
+				t.Fatalf("test case %q has mismatched calls and delays", tc.name)
+			}
+
+			for i, offset := range tc.calls {
+				now := windowStart.Add(offset)
+				delay := pacer.reserve(now, tc.spread)
+				if delay != tc.wantDelays[i] {
+					t.Fatalf("call %d delay = %v, want %v", i, delay, tc.wantDelays[i])
+				}
+			}
+
+			if pacer.requestsDone != tc.wantRequestsDone {
+				t.Fatalf("requestsDone = %d, want %d", pacer.requestsDone, tc.wantRequestsDone)
+			}
+			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			}
+			if !pacer.windowStart.Equal(tc.wantWindowStart) {
+				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, tc.wantWindowStart)
+			}
+		})
+	}
+}
+
 // --- 1. The "Before" Implementation (time.Now inside the lock) ---
 type PacerInside struct {
 	mu            sync.Mutex

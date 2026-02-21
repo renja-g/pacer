@@ -45,4 +45,29 @@ func main() {
 		fmt.Printf("Req %2d | Elapsed: %v | +%s\n", i, now.Sub(programStart).Round(time.Millisecond), delta)
 		prevRequestTime = now
 	}
+
+	fmt.Println("\n--- Phase 4: Burst mode ---")
+	// burst 10 requests
+	for i := 1; i <= 10; i++ {
+		now := rl.TakeBurst()
+		delta := "N/A"
+		if !prevRequestTime.IsZero() {
+			delta = now.Sub(prevRequestTime).Round(time.Millisecond).String()
+		}
+		fmt.Printf("Req %2d | Elapsed: %v | +%s\n", i, now.Sub(programStart).Round(time.Millisecond), delta)
+		prevRequestTime = now
+	}
+
+	// see how the request now are slower to balance out the burst requests
+	fmt.Println("\n--- Phase 5: Normal mode ---")
+
+	for i := 11; i <= 20; i++ {
+		now := rl.Take()
+		delta := "N/A"
+		if !prevRequestTime.IsZero() {
+			delta = now.Sub(prevRequestTime).Round(time.Millisecond).String()
+		}
+		fmt.Printf("Req %2d | Elapsed: %v | +%s\n", i, now.Sub(programStart).Round(time.Millisecond), delta)
+		prevRequestTime = now
+	}
 }

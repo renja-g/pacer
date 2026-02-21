@@ -28,11 +28,20 @@ func NewDynamicPacer(maxRequests int, windowSize time.Duration) *DynamicPacer {
 
 // Take blocks until the calculated interval passes and returns the execution time.
 func (s *DynamicPacer) Take() time.Time {
+	return s.take(true)
+}
+
+// TakeBurst enforces the total window limit but does not spread requests.
+func (s *DynamicPacer) TakeBurst() time.Time {
+	return s.take(false)
+}
+
+func (s *DynamicPacer) take(spread bool) time.Time {
 	// 1. Get the current time outside the lock (Syscall happens concurrently)
 	now := time.Now()
 
 	// 2. Pass 'now' into the math function
-	delay := s.reserve(now)
+	delay := s.reserve(now, spread)
 
 	// 3. Sleep outside the lock
 	if delay > 0 {
@@ -46,7 +55,7 @@ func (s *DynamicPacer) Take() time.Time {
 // reserve calculates the required wait time in nanoseconds without blocking.
 // This is the "Critical Section" and executes extremely fast.
 // reserve takes 'now' as an argument. The critical section is now purely math.
-func (s *DynamicPacer) reserve(now time.Time) time.Duration {
+func (s *DynamicPacer) reserve(now time.Time, spread bool) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -70,6 +79,12 @@ func (s *DynamicPacer) reserve(now time.Time) time.Duration {
 		s.requestsDone = 1
 		s.lastRequestAt = windowEnd
 		return waitTime
+	}
+
+	if !spread {
+		s.requestsDone++
+		s.lastRequestAt = now
+		return 0
 	}
 
 	// 3. Dynamic spacing
