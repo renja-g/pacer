@@ -1,3 +1,4 @@
+// Package pacer provides dynamic request pacing within fixed windows.
 package pacer
 
 import (
@@ -18,7 +19,14 @@ type DynamicPacer struct {
 }
 
 // NewDynamicPacer creates a new rate limiter.
+// It panics if maxRequests <= 0 or windowSize <= 0.
 func NewDynamicPacer(maxRequests int, windowSize time.Duration) *DynamicPacer {
+	if maxRequests <= 0 {
+		panic("pacer: maxRequests must be positive")
+	}
+	if windowSize <= 0 {
+		panic("pacer: windowSize must be positive")
+	}
 	return &DynamicPacer{
 		windowSize:  windowSize,
 		maxRequests: maxRequests,
@@ -37,24 +45,23 @@ func (s *DynamicPacer) TakeBurst() time.Time {
 }
 
 func (s *DynamicPacer) take(spread bool) time.Time {
-	// 1. Get the current time outside the lock (Syscall happens concurrently)
+	// 1. Get the current time outside the lock.
 	now := time.Now()
 
-	// 2. Pass 'now' into the math function
+	// 2. Pass now into the math function.
 	delay := s.reserve(now, spread)
 
-	// 3. Sleep outside the lock
+	// 3. Sleep outside the lock.
 	if delay > 0 {
 		time.Sleep(delay)
-		return now.Add(delay) // Return the exact simulated time of execution
+		return now.Add(delay) // Return the exact simulated execution time.
 	}
 
 	return now
 }
 
-// reserve calculates the required wait time in nanoseconds without blocking.
-// This is the "Critical Section" and executes extremely fast.
-// reserve takes 'now' as an argument. The critical section is now purely math.
+// reserve calculates the required wait time without blocking.
+// reserve takes now as an argument so the critical section is pure math.
 func (s *DynamicPacer) reserve(now time.Time, spread bool) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -132,8 +132,8 @@ func TestDynamicPacerReserveFutureWindowStart(t *testing.T) {
 	}
 }
 
-// --- 1. The "Before" Implementation (time.Now inside the lock) ---
-type PacerInside struct {
+// --- 1. The "before" implementation (time.Now inside the lock). ---
+type pacerInside struct {
 	mu            sync.Mutex
 	windowSize    time.Duration
 	maxRequests   int
@@ -142,11 +142,11 @@ type PacerInside struct {
 	lastRequestAt time.Time
 }
 
-func (s *PacerInside) reserve() time.Duration {
+func (s *pacerInside) reserve() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// THE BOTTLENECK: System call inside the critical section
+	// The bottleneck is a system call inside the critical section.
 	now := time.Now()
 	windowEnd := s.windowStart.Add(s.windowSize)
 
@@ -180,8 +180,8 @@ func (s *PacerInside) reserve() time.Duration {
 	return delay
 }
 
-// --- 2. The "After" Implementation (time.Now outside the lock) ---
-type PacerOutside struct {
+// --- 2. The "after" implementation (time.Now outside the lock). ---
+type pacerOutside struct {
 	mu            sync.Mutex
 	windowSize    time.Duration
 	maxRequests   int
@@ -190,8 +190,8 @@ type PacerOutside struct {
 	lastRequestAt time.Time
 }
 
-// reserve accepts 'now' as an argument, making the lock pure math
-func (s *PacerOutside) reserve(now time.Time) time.Duration {
+// reserve accepts now as an argument, making the lock pure math.
+func (s *pacerOutside) reserve(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -227,7 +227,7 @@ func (s *PacerOutside) reserve(now time.Time) time.Duration {
 	return delay
 }
 
-// --- 3. The Benchmarks ---
+// --- 3. The benchmarks. ---
 
 // We use 1 billion requests over a 1-hour window so the window never
 // actually resets during the benchmark, keeping us purely on the "hot path".
@@ -235,7 +235,7 @@ const benchmarkRequests = 1_000_000_000
 const benchmarkWindow = 1 * time.Hour
 
 func BenchmarkTimeNowInsideLock(b *testing.B) {
-	rl := &PacerInside{
+	rl := &pacerInside{
 		windowSize:  benchmarkWindow,
 		maxRequests: benchmarkRequests,
 		windowStart: time.Now(),
@@ -251,7 +251,7 @@ func BenchmarkTimeNowInsideLock(b *testing.B) {
 }
 
 func BenchmarkTimeNowOutsideLock(b *testing.B) {
-	rl := &PacerOutside{
+	rl := &pacerOutside{
 		windowSize:  benchmarkWindow,
 		maxRequests: benchmarkRequests,
 		windowStart: time.Now(),

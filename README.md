@@ -7,6 +7,6 @@ Dynamic request pacing with a fixed window that adapts after idle periods.
 Run the demo that mirrors the phased example:
 
 ```sh
-cd /Users/renjagrotemeyer/Desktop/projects/pacer
+cd /path/to/pacer
 go run ./cmd/pacer-demo
 ```
