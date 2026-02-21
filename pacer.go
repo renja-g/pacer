@@ -26,26 +26,30 @@ func NewDynamicSpreader(maxRequests int, windowSize time.Duration) *DynamicSprea
 	}
 }
 
-// Take blocks the current goroutine until the dynamically calculated interval has passed.
+// Take blocks until the calculated interval passes and returns the execution time.
 func (s *DynamicSpreader) Take() time.Time {
-	// 1. Calculate the delay instantly inside the mutex
-	delay := s.reserve()
+	// 1. Get the current time outside the lock (Syscall happens concurrently)
+	now := time.Now()
 
-	// 2. Execute the wait OUTSIDE the mutex to prevent locking other goroutines
+	// 2. Pass 'now' into the math function
+	delay := s.reserve(now)
+
+	// 3. Sleep outside the lock
 	if delay > 0 {
 		time.Sleep(delay)
+		return now.Add(delay) // Return the exact simulated time of execution
 	}
 
-	return time.Now()
+	return now
 }
 
 // reserve calculates the required wait time in nanoseconds without blocking.
 // This is the "Critical Section" and executes extremely fast.
-func (s *DynamicSpreader) reserve() time.Duration {
+// reserve takes 'now' as an argument. The critical section is now purely math.
+func (s *DynamicSpreader) reserve(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
 	windowEnd := s.windowStart.Add(s.windowSize)
 
 	// 1. Shift window if current time has passed the active window boundary.
@@ -59,31 +63,25 @@ func (s *DynamicSpreader) reserve() time.Duration {
 
 	requestsLeft := s.maxRequests - s.requestsDone
 
-	// 2. Window exhausted: push this request to the start of the next window.
+	// 2. Window exhausted
 	if requestsLeft <= 0 {
 		waitTime := windowEnd.Sub(now)
-
-		// Pre-book the first slot of the upcoming window
 		s.windowStart = windowEnd
 		s.requestsDone = 1
 		s.lastRequestAt = windowEnd
-
 		return waitTime
 	}
 
-	// 3. Dynamic spacing: calculate the ideal interval for the remaining time.
+	// 3. Dynamic spacing
 	timeLeft := windowEnd.Sub(now)
 	interval := timeLeft / time.Duration(requestsLeft)
 
 	var delay time.Duration
 	targetTime := now
 
-	// 4. Determine target execution time based on the previous request.
+	// 4. Target calculation
 	if !s.lastRequestAt.IsZero() {
 		targetTime = s.lastRequestAt.Add(interval)
-
-		// If target time is in the past (e.g., after an idle period),
-		// we catch up by allowing it to fire immediately (delay = 0).
 		if targetTime.Before(now) {
 			targetTime = now
 		} else {
@@ -91,7 +89,6 @@ func (s *DynamicSpreader) reserve() time.Duration {
 		}
 	}
 
-	// 5. Update state for the next caller
 	s.requestsDone++
 	s.lastRequestAt = targetTime
 
