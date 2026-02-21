@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// DynamicSpreader ensures requests are evenly distributed over the remaining
+// DynamicPacer ensures requests are evenly distributed over the remaining
 // time in a fixed window, adjusting automatically after idle periods.
-type DynamicSpreader struct {
+type DynamicPacer struct {
 	mu          sync.Mutex
 	windowSize  time.Duration
 	maxRequests int
@@ -17,9 +17,9 @@ type DynamicSpreader struct {
 	lastRequestAt time.Time
 }
 
-// NewDynamicSpreader creates a new rate limiter.
-func NewDynamicSpreader(maxRequests int, windowSize time.Duration) *DynamicSpreader {
-	return &DynamicSpreader{
+// NewDynamicPacer creates a new rate limiter.
+func NewDynamicPacer(maxRequests int, windowSize time.Duration) *DynamicPacer {
+	return &DynamicPacer{
 		windowSize:  windowSize,
 		maxRequests: maxRequests,
 		windowStart: time.Now(),
@@ -27,7 +27,7 @@ func NewDynamicSpreader(maxRequests int, windowSize time.Duration) *DynamicSprea
 }
 
 // Take blocks until the calculated interval passes and returns the execution time.
-func (s *DynamicSpreader) Take() time.Time {
+func (s *DynamicPacer) Take() time.Time {
 	// 1. Get the current time outside the lock (Syscall happens concurrently)
 	now := time.Now()
 
@@ -46,7 +46,7 @@ func (s *DynamicSpreader) Take() time.Time {
 // reserve calculates the required wait time in nanoseconds without blocking.
 // This is the "Critical Section" and executes extremely fast.
 // reserve takes 'now' as an argument. The critical section is now purely math.
-func (s *DynamicSpreader) reserve(now time.Time) time.Duration {
+func (s *DynamicPacer) reserve(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

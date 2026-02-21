@@ -9,7 +9,7 @@ import (
 
 func main() {
 	// Setup: 20 requests per 10-second window
-	rl := pacer.NewDynamicSpreader(20, 10*time.Second)
+	rl := pacer.NewDynamicPacer(20, 10*time.Second)
 	programStart := time.Now()
 	var prevRequestTime time.Time
 

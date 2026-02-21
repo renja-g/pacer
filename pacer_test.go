@@ -7,7 +7,7 @@ import (
 )
 
 // --- 1. The "Before" Implementation (time.Now inside the lock) ---
-type SpreaderInside struct {
+type PacerInside struct {
 	mu            sync.Mutex
 	windowSize    time.Duration
 	maxRequests   int
@@ -16,7 +16,7 @@ type SpreaderInside struct {
 	lastRequestAt time.Time
 }
 
-func (s *SpreaderInside) reserve() time.Duration {
+func (s *PacerInside) reserve() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -55,7 +55,7 @@ func (s *SpreaderInside) reserve() time.Duration {
 }
 
 // --- 2. The "After" Implementation (time.Now outside the lock) ---
-type SpreaderOutside struct {
+type PacerOutside struct {
 	mu            sync.Mutex
 	windowSize    time.Duration
 	maxRequests   int
@@ -65,7 +65,7 @@ type SpreaderOutside struct {
 }
 
 // reserve accepts 'now' as an argument, making the lock pure math
-func (s *SpreaderOutside) reserve(now time.Time) time.Duration {
+func (s *PacerOutside) reserve(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -109,7 +109,7 @@ const benchmarkRequests = 1_000_000_000
 const benchmarkWindow = 1 * time.Hour
 
 func BenchmarkTimeNowInsideLock(b *testing.B) {
-	rl := &SpreaderInside{
+	rl := &PacerInside{
 		windowSize:  benchmarkWindow,
 		maxRequests: benchmarkRequests,
 		windowStart: time.Now(),
@@ -125,7 +125,7 @@ func BenchmarkTimeNowInsideLock(b *testing.B) {
 }
 
 func BenchmarkTimeNowOutsideLock(b *testing.B) {
-	rl := &SpreaderOutside{
+	rl := &PacerOutside{
 		windowSize:  benchmarkWindow,
 		maxRequests: benchmarkRequests,
 		windowStart: time.Now(),
