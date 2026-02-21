@@ -73,6 +73,65 @@ func TestDynamicPacerReserve(t *testing.T) {
 	}
 }
 
+func TestDynamicPacerReserveFutureWindowStart(t *testing.T) {
+	windowStart := time.Unix(0, 0).Add(10 * time.Second)
+	now := windowStart.Add(-5 * time.Second)
+
+	type testCase struct {
+		name             string
+		spread           bool
+		wantDelay        time.Duration
+		wantRequestsDone int
+		wantLastRequest  time.Time
+		wantWindowStart  time.Time
+	}
+
+	cases := []testCase{
+		{
+			name:             "burst-waits-until-window-start",
+			spread:           false,
+			wantDelay:        5 * time.Second,
+			wantRequestsDone: 2,
+			wantLastRequest:  windowStart,
+			wantWindowStart:  windowStart,
+		},
+		{
+			name:             "spread-uses-window-start",
+			spread:           true,
+			wantDelay:        15 * time.Second,
+			wantRequestsDone: 2,
+			wantLastRequest:  windowStart.Add(10 * time.Second),
+			wantWindowStart:  windowStart,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pacer := &DynamicPacer{
+				windowSize:    10 * time.Second,
+				maxRequests:   2,
+				windowStart:   windowStart,
+				requestsDone:  1,
+				lastRequestAt: windowStart,
+			}
+
+			delay := pacer.reserve(now, tc.spread)
+			if delay != tc.wantDelay {
+				t.Fatalf("delay = %v, want %v", delay, tc.wantDelay)
+			}
+			if pacer.requestsDone != tc.wantRequestsDone {
+				t.Fatalf("requestsDone = %d, want %d", pacer.requestsDone, tc.wantRequestsDone)
+			}
+			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			}
+			if !pacer.windowStart.Equal(tc.wantWindowStart) {
+				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, tc.wantWindowStart)
+			}
+		})
+	}
+}
+
 // --- 1. The "Before" Implementation (time.Now inside the lock) ---
 type PacerInside struct {
 	mu            sync.Mutex

@@ -70,42 +70,49 @@ func (s *DynamicPacer) reserve(now time.Time, spread bool) time.Duration {
 		s.lastRequestAt = time.Time{}
 	}
 
+	effectiveNow := now
+	var waitBeforeWindow time.Duration
+	if now.Before(s.windowStart) {
+		waitBeforeWindow = s.windowStart.Sub(now)
+		effectiveNow = s.windowStart
+	}
+
 	requestsLeft := s.maxRequests - s.requestsDone
 
 	// 2. Window exhausted
 	if requestsLeft <= 0 {
-		waitTime := windowEnd.Sub(now)
+		waitTime := windowEnd.Sub(effectiveNow)
 		s.windowStart = windowEnd
 		s.requestsDone = 1
 		s.lastRequestAt = windowEnd
-		return waitTime
+		return waitBeforeWindow + waitTime
 	}
 
 	if !spread {
 		s.requestsDone++
-		s.lastRequestAt = now
-		return 0
+		s.lastRequestAt = effectiveNow
+		return waitBeforeWindow
 	}
 
 	// 3. Dynamic spacing
-	timeLeft := windowEnd.Sub(now)
+	timeLeft := windowEnd.Sub(effectiveNow)
 	interval := timeLeft / time.Duration(requestsLeft)
 
 	var delay time.Duration
-	targetTime := now
+	targetTime := effectiveNow
 
 	// 4. Target calculation
 	if !s.lastRequestAt.IsZero() {
 		targetTime = s.lastRequestAt.Add(interval)
-		if targetTime.Before(now) {
-			targetTime = now
+		if targetTime.Before(effectiveNow) {
+			targetTime = effectiveNow
 		} else {
-			delay = targetTime.Sub(now)
+			delay = targetTime.Sub(effectiveNow)
 		}
 	}
 
 	s.requestsDone++
 	s.lastRequestAt = targetTime
 
-	return delay
+	return waitBeforeWindow + delay
 }
