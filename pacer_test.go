@@ -2,6 +2,7 @@ package pacer
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -18,6 +19,24 @@ func (f *fakeClock) Now() time.Time {
 func (f *fakeClock) Sleep(d time.Duration) {
 	f.slept = append(f.slept, d)
 	f.now = f.now.Add(d)
+}
+
+type benchClock struct {
+	now atomic.Int64
+}
+
+func newBenchClock(start time.Time) *benchClock {
+	clock := &benchClock{}
+	clock.now.Store(start.UnixNano())
+	return clock
+}
+
+func (b *benchClock) Now() time.Time {
+	return time.Unix(0, b.now.Load())
+}
+
+func (b *benchClock) Sleep(d time.Duration) {
+	b.now.Add(int64(d))
 }
 
 func TestNewOptions(t *testing.T) {
@@ -92,8 +111,8 @@ func TestNewOptions(t *testing.T) {
 			if pacer.clock != fc {
 				t.Fatalf("clock = %v, want %v", pacer.clock, fc)
 			}
-			if !pacer.windowStart.Equal(baseTime) {
-				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, baseTime)
+			if pacer.windowStartNanos != baseTime.UnixNano() {
+				t.Fatalf("windowStart = %v, want %v", time.Unix(0, pacer.windowStartNanos), baseTime)
 			}
 		})
 	}
@@ -174,12 +193,16 @@ func TestDynamicPacerReserveSlack(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			windowSize := 10 * time.Second
+			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:     10 * time.Second,
-				maxRequests:    2,
-				windowStart:    windowStart,
-				slack:          tc.slack,
-				slackRemaining: tc.slack,
+				windowSize:      windowSize,
+				windowSizeNanos: windowSize.Nanoseconds(),
+				maxRequests:     2,
+				windowStartNanos: windowStartNanos,
+				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
+				slack:            tc.slack,
+				slackRemaining:   tc.slack,
 			}
 
 			if len(tc.calls) != len(tc.wantDelays) {
@@ -188,7 +211,7 @@ func TestDynamicPacerReserveSlack(t *testing.T) {
 
 			for i, offset := range tc.calls {
 				now := windowStart.Add(offset)
-				delay := pacer.reserve(now, true)
+				delay := pacer.reserve(now.UnixNano(), true)
 				if delay != tc.wantDelays[i] {
 					t.Fatalf("call %d delay = %v, want %v", i, delay, tc.wantDelays[i])
 				}
@@ -197,8 +220,9 @@ func TestDynamicPacerReserveSlack(t *testing.T) {
 			if pacer.slackRemaining != tc.wantSlackRemaining {
 				t.Fatalf("slackRemaining = %d, want %d", pacer.slackRemaining, tc.wantSlackRemaining)
 			}
-			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
-				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			lastRequestAt := time.Unix(0, pacer.lastRequestNanos)
+			if !lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", lastRequestAt, tc.wantLastRequest)
 			}
 		})
 	}
@@ -240,10 +264,14 @@ func TestDynamicPacerReserve(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			windowSize := 10 * time.Second
+			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:  10 * time.Second,
-				maxRequests: 2,
-				windowStart: windowStart,
+				windowSize:      windowSize,
+				windowSizeNanos: windowSize.Nanoseconds(),
+				maxRequests:     2,
+				windowStartNanos: windowStartNanos,
+				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
 			}
 
 			if len(tc.calls) != len(tc.wantDelays) {
@@ -252,7 +280,7 @@ func TestDynamicPacerReserve(t *testing.T) {
 
 			for i, offset := range tc.calls {
 				now := windowStart.Add(offset)
-				delay := pacer.reserve(now, tc.spread)
+				delay := pacer.reserve(now.UnixNano(), tc.spread)
 				if delay != tc.wantDelays[i] {
 					t.Fatalf("call %d delay = %v, want %v", i, delay, tc.wantDelays[i])
 				}
@@ -261,11 +289,13 @@ func TestDynamicPacerReserve(t *testing.T) {
 			if pacer.requestsDone != tc.wantRequestsDone {
 				t.Fatalf("requestsDone = %d, want %d", pacer.requestsDone, tc.wantRequestsDone)
 			}
-			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
-				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			lastRequestAt := time.Unix(0, pacer.lastRequestNanos)
+			if !lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", lastRequestAt, tc.wantLastRequest)
 			}
-			if !pacer.windowStart.Equal(tc.wantWindowStart) {
-				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, tc.wantWindowStart)
+			windowStart := time.Unix(0, pacer.windowStartNanos)
+			if !windowStart.Equal(tc.wantWindowStart) {
+				t.Fatalf("windowStart = %v, want %v", windowStart, tc.wantWindowStart)
 			}
 		})
 	}
@@ -305,26 +335,33 @@ func TestDynamicPacerReserveFutureWindowStart(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			windowSize := 10 * time.Second
+			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:    10 * time.Second,
-				maxRequests:   2,
-				windowStart:   windowStart,
-				requestsDone:  1,
-				lastRequestAt: windowStart,
+				windowSize:      windowSize,
+				windowSizeNanos: windowSize.Nanoseconds(),
+				maxRequests:     2,
+				windowStartNanos: windowStartNanos,
+				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
+				requestsDone:     1,
+				lastRequestNanos: windowStartNanos,
+				hasLastRequest:   true,
 			}
 
-			delay := pacer.reserve(now, tc.spread)
+			delay := pacer.reserve(now.UnixNano(), tc.spread)
 			if delay != tc.wantDelay {
 				t.Fatalf("delay = %v, want %v", delay, tc.wantDelay)
 			}
 			if pacer.requestsDone != tc.wantRequestsDone {
 				t.Fatalf("requestsDone = %d, want %d", pacer.requestsDone, tc.wantRequestsDone)
 			}
-			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
-				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			lastRequestAt := time.Unix(0, pacer.lastRequestNanos)
+			if !lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", lastRequestAt, tc.wantLastRequest)
 			}
-			if !pacer.windowStart.Equal(tc.wantWindowStart) {
-				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, tc.wantWindowStart)
+			windowStart := time.Unix(0, pacer.windowStartNanos)
+			if !windowStart.Equal(tc.wantWindowStart) {
+				t.Fatalf("windowStart = %v, want %v", windowStart, tc.wantWindowStart)
 			}
 		})
 	}
@@ -463,4 +500,53 @@ func BenchmarkTimeNowOutsideLock(b *testing.B) {
 			_ = rl.reserve(now)
 		}
 	})
+}
+
+func BenchmarkDynamicPacerTake(b *testing.B) {
+	type benchCase struct {
+		name     string
+		spread   bool
+		parallel bool
+	}
+
+	cases := []benchCase{
+		{name: "spread/serial", spread: true, parallel: false},
+		{name: "burst/serial", spread: false, parallel: false},
+		{name: "spread/parallel", spread: true, parallel: true},
+		{name: "burst/parallel", spread: false, parallel: true},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			clock := newBenchClock(time.Unix(0, 0))
+			limiter := New(
+				benchmarkRequests,
+				Per(benchmarkWindow),
+				WithClock(clock),
+			)
+
+			b.ResetTimer()
+
+			if tc.parallel {
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						if tc.spread {
+							limiter.Take()
+						} else {
+							limiter.TakeBurst()
+						}
+					}
+				})
+				return
+			}
+
+			for i := 0; i < b.N; i++ {
+				if tc.spread {
+					limiter.Take()
+				} else {
+					limiter.TakeBurst()
+				}
+			}
+		})
+	}
 }

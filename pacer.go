@@ -67,16 +67,19 @@ func WithSlack(slack int) Option {
 // DynamicPacer ensures requests are evenly distributed over the remaining
 // time in a fixed window, adjusting automatically after idle periods.
 type DynamicPacer struct {
-	mu          sync.Mutex
-	windowSize  time.Duration
-	maxRequests int
+	mu              sync.Mutex
+	windowSize      time.Duration
+	windowSizeNanos int64
+	maxRequests     int
 
-	windowStart    time.Time
-	requestsDone   int
-	lastRequestAt  time.Time
-	slack          int
-	slackRemaining int
-	clock          Clock
+	windowStartNanos int64
+	windowEndNanos   int64
+	requestsDone     int
+	lastRequestNanos int64
+	hasLastRequest   bool
+	slack            int
+	slackRemaining   int
+	clock            Clock
 }
 
 // New creates a new pacer for the given rate.
@@ -101,13 +104,18 @@ func New(rate int, opts ...Option) *DynamicPacer {
 		panic("pacer: slack must be non-negative")
 	}
 
+	now := cfg.clock.Now()
+	windowSizeNanos := cfg.per.Nanoseconds()
+
 	return &DynamicPacer{
-		windowSize:     cfg.per,
-		maxRequests:    rate,
-		windowStart:    cfg.clock.Now(),
-		slack:          cfg.slack,
-		slackRemaining: cfg.slack,
-		clock:          cfg.clock,
+		windowSize:       cfg.per,
+		windowSizeNanos:  windowSizeNanos,
+		maxRequests:      rate,
+		windowStartNanos: now.UnixNano(),
+		windowEndNanos:   now.UnixNano() + windowSizeNanos,
+		slack:            cfg.slack,
+		slackRemaining:   cfg.slack,
+		clock:            cfg.clock,
 	}
 }
 
@@ -132,14 +140,15 @@ func (s *DynamicPacer) take(spread bool) time.Time {
 	// 1. Get the current time outside the lock.
 	clock := s.activeClock()
 	now := clock.Now()
+	nowNanos := now.UnixNano()
 
 	// 2. Pass now into the math function.
-	delay := s.reserve(now, spread)
+	delay := s.reserve(nowNanos, spread)
 
 	// 3. Sleep outside the lock.
 	if delay > 0 {
 		clock.Sleep(delay)
-		return now.Add(delay) // Return the exact simulated execution time.
+		return now.Add(delay)
 	}
 
 	return now
@@ -147,72 +156,75 @@ func (s *DynamicPacer) take(spread bool) time.Time {
 
 // reserve calculates the required wait time without blocking.
 // reserve takes now as an argument so the critical section is pure math.
-func (s *DynamicPacer) reserve(now time.Time, spread bool) time.Duration {
+func (s *DynamicPacer) reserve(nowNanos int64, spread bool) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	windowEnd := s.windowStart.Add(s.windowSize)
-
 	// 1. Shift window if current time has passed the active window boundary.
-	if now.After(windowEnd) || now.Equal(windowEnd) {
-		intervalsPassed := now.Sub(s.windowStart) / s.windowSize
-		s.windowStart = s.windowStart.Add(intervalsPassed * s.windowSize)
-		windowEnd = s.windowStart.Add(s.windowSize)
+	if nowNanos >= s.windowEndNanos {
+		intervalsPassed := (nowNanos - s.windowStartNanos) / s.windowSizeNanos
+		s.windowStartNanos += intervalsPassed * s.windowSizeNanos
+		s.windowEndNanos = s.windowStartNanos + s.windowSizeNanos
 		s.requestsDone = 0
-		s.lastRequestAt = time.Time{}
+		s.lastRequestNanos = 0
+		s.hasLastRequest = false
 		s.slackRemaining = s.slack
 	}
 
-	effectiveNow := now
-	var waitBeforeWindow time.Duration
-	if now.Before(s.windowStart) {
-		waitBeforeWindow = s.windowStart.Sub(now)
-		effectiveNow = s.windowStart
+	effectiveNowNanos := nowNanos
+	var waitBeforeWindow int64
+	if nowNanos < s.windowStartNanos {
+		waitBeforeWindow = s.windowStartNanos - nowNanos
+		effectiveNowNanos = s.windowStartNanos
 	}
 
 	requestsLeft := s.maxRequests - s.requestsDone
 
 	// 2. Window exhausted
 	if requestsLeft <= 0 {
-		waitTime := windowEnd.Sub(effectiveNow)
-		s.windowStart = windowEnd
+		waitTime := s.windowEndNanos - effectiveNowNanos
+		s.windowStartNanos = s.windowEndNanos
+		s.windowEndNanos = s.windowStartNanos + s.windowSizeNanos
 		s.requestsDone = 1
-		s.lastRequestAt = windowEnd
+		s.lastRequestNanos = s.windowStartNanos
+		s.hasLastRequest = true
 		s.slackRemaining = s.slack
-		return waitBeforeWindow + waitTime
+		return time.Duration(waitBeforeWindow + waitTime)
 	}
 
 	if !spread {
 		s.requestsDone++
-		s.lastRequestAt = effectiveNow
-		return waitBeforeWindow
+		s.lastRequestNanos = effectiveNowNanos
+		s.hasLastRequest = true
+		return time.Duration(waitBeforeWindow)
 	}
 
 	// 3. Dynamic spacing
-	timeLeft := windowEnd.Sub(effectiveNow)
-	interval := timeLeft / time.Duration(requestsLeft)
+	timeLeft := s.windowEndNanos - effectiveNowNanos
+	interval := timeLeft / int64(requestsLeft)
 
-	var delay time.Duration
-	targetTime := effectiveNow
+	var delay int64
+	targetTimeNanos := effectiveNowNanos
 
 	// 4. Target calculation
-	if !s.lastRequestAt.IsZero() {
-		targetTime = s.lastRequestAt.Add(interval)
-		if targetTime.Before(effectiveNow) {
-			targetTime = effectiveNow
+	if s.hasLastRequest {
+		targetTimeNanos = s.lastRequestNanos + interval
+		if targetTimeNanos < effectiveNowNanos {
+			targetTimeNanos = effectiveNowNanos
 		} else {
-			delay = targetTime.Sub(effectiveNow)
+			delay = targetTimeNanos - effectiveNowNanos
 		}
 	}
 
 	if delay > 0 && s.slackRemaining > 0 {
 		s.slackRemaining--
 		delay = 0
-		targetTime = effectiveNow
+		targetTimeNanos = effectiveNowNanos
 	}
 
 	s.requestsDone++
-	s.lastRequestAt = targetTime
+	s.lastRequestNanos = targetTimeNanos
+	s.hasLastRequest = true
 
-	return waitBeforeWindow + delay
+	return time.Duration(waitBeforeWindow + delay)
 }
