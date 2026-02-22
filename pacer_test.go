@@ -6,6 +6,204 @@ import (
 	"time"
 )
 
+type fakeClock struct {
+	now   time.Time
+	slept []time.Duration
+}
+
+func (f *fakeClock) Now() time.Time {
+	return f.now
+}
+
+func (f *fakeClock) Sleep(d time.Duration) {
+	f.slept = append(f.slept, d)
+	f.now = f.now.Add(d)
+}
+
+func TestNewOptions(t *testing.T) {
+	baseTime := time.Unix(0, 0)
+
+	type testCase struct {
+		name           string
+		rate           int
+		per            time.Duration
+		slack          int
+		useFakeClock   bool
+		wantWindowSize time.Duration
+		wantSlack      int
+		wantClockType  string
+	}
+
+	cases := []testCase{
+		{
+			name:           "defaults",
+			rate:           10,
+			wantWindowSize: time.Second,
+			wantSlack:      0,
+			wantClockType:  "real",
+		},
+		{
+			name:           "custom-per-slack-clock",
+			rate:           5,
+			per:            10 * time.Second,
+			slack:          2,
+			useFakeClock:   true,
+			wantWindowSize: 10 * time.Second,
+			wantSlack:      2,
+			wantClockType:  "fake",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var opts []Option
+			var fc *fakeClock
+
+			if tc.per != 0 {
+				opts = append(opts, Per(tc.per))
+			}
+			if tc.slack != 0 {
+				opts = append(opts, WithSlack(tc.slack))
+			}
+			if tc.useFakeClock {
+				fc = &fakeClock{now: baseTime}
+				opts = append(opts, WithClock(fc))
+			}
+
+			pacer := New(tc.rate, opts...)
+
+			if pacer.windowSize != tc.wantWindowSize {
+				t.Fatalf("windowSize = %v, want %v", pacer.windowSize, tc.wantWindowSize)
+			}
+			if pacer.slack != tc.wantSlack {
+				t.Fatalf("slack = %d, want %d", pacer.slack, tc.wantSlack)
+			}
+			if pacer.slackRemaining != tc.wantSlack {
+				t.Fatalf("slackRemaining = %d, want %d", pacer.slackRemaining, tc.wantSlack)
+			}
+
+			if tc.wantClockType == "real" {
+				if _, ok := pacer.clock.(realClock); !ok {
+					t.Fatalf("clock = %T, want realClock", pacer.clock)
+				}
+				return
+			}
+
+			if pacer.clock != fc {
+				t.Fatalf("clock = %v, want %v", pacer.clock, fc)
+			}
+			if !pacer.windowStart.Equal(baseTime) {
+				t.Fatalf("windowStart = %v, want %v", pacer.windowStart, baseTime)
+			}
+		})
+	}
+}
+
+func TestNewPanics(t *testing.T) {
+	type testCase struct {
+		name string
+		rate int
+		opts []Option
+	}
+
+	cases := []testCase{
+		{
+			name: "rate-zero",
+			rate: 0,
+		},
+		{
+			name: "per-zero",
+			rate: 1,
+			opts: []Option{Per(0)},
+		},
+		{
+			name: "slack-negative",
+			rate: 1,
+			opts: []Option{WithSlack(-1)},
+		},
+		{
+			name: "clock-nil",
+			rate: 1,
+			opts: []Option{WithClock(nil)},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("expected panic")
+				}
+			}()
+
+			_ = New(tc.rate, tc.opts...)
+		})
+	}
+}
+
+func TestDynamicPacerReserveSlack(t *testing.T) {
+	windowStart := time.Unix(0, 0)
+
+	type testCase struct {
+		name               string
+		slack              int
+		calls              []time.Duration
+		wantDelays         []time.Duration
+		wantSlackRemaining int
+		wantLastRequest    time.Time
+	}
+
+	cases := []testCase{
+		{
+			name:               "no-slack",
+			slack:              0,
+			calls:              []time.Duration{0, 1 * time.Second},
+			wantDelays:         []time.Duration{0, 8 * time.Second},
+			wantSlackRemaining: 0,
+			wantLastRequest:    windowStart.Add(9 * time.Second),
+		},
+		{
+			name:               "slack-skips-delay",
+			slack:              1,
+			calls:              []time.Duration{0, 1 * time.Second},
+			wantDelays:         []time.Duration{0, 0},
+			wantSlackRemaining: 0,
+			wantLastRequest:    windowStart.Add(1 * time.Second),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pacer := &DynamicPacer{
+				windowSize:     10 * time.Second,
+				maxRequests:    2,
+				windowStart:    windowStart,
+				slack:          tc.slack,
+				slackRemaining: tc.slack,
+			}
+
+			if len(tc.calls) != len(tc.wantDelays) {
+				t.Fatalf("test case %q has mismatched calls and delays", tc.name)
+			}
+
+			for i, offset := range tc.calls {
+				now := windowStart.Add(offset)
+				delay := pacer.reserve(now, true)
+				if delay != tc.wantDelays[i] {
+					t.Fatalf("call %d delay = %v, want %v", i, delay, tc.wantDelays[i])
+				}
+			}
+
+			if pacer.slackRemaining != tc.wantSlackRemaining {
+				t.Fatalf("slackRemaining = %d, want %d", pacer.slackRemaining, tc.wantSlackRemaining)
+			}
+			if !pacer.lastRequestAt.Equal(tc.wantLastRequest) {
+				t.Fatalf("lastRequestAt = %v, want %v", pacer.lastRequestAt, tc.wantLastRequest)
+			}
+		})
+	}
+}
+
 func TestDynamicPacerReserve(t *testing.T) {
 	windowStart := time.Unix(0, 0)
 
