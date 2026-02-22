@@ -18,9 +18,9 @@ type DynamicPacer struct {
 	lastRequestAt time.Time
 }
 
-// NewDynamicPacer creates a new rate limiter.
+// New creates a new fixed-window pacer.
 // It panics if maxRequests <= 0 or windowSize <= 0.
-func NewDynamicPacer(maxRequests int, windowSize time.Duration) *DynamicPacer {
+func New(maxRequests int, windowSize time.Duration) *DynamicPacer {
 	if maxRequests <= 0 {
 		panic("pacer: maxRequests must be positive")
 	}
