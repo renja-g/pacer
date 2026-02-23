@@ -6,10 +6,6 @@ import (
 	"time"
 )
 
-type Limiter interface {
-	Take() time.Time
-}
-
 // Clock allows swapping time sources in tests.
 type Clock interface {
 	Now() time.Time
