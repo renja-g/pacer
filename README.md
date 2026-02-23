@@ -2,6 +2,27 @@
 
 Dynamic request pacing with a fixed window that spreads requests evenly over the window and adapts after idle periods.
 
+## How it works
+
+This pacer uses a fixed window and dynamically recalculates spacing based on
+how much time remains in the current window.
+
+- The window length is `Per` (default 1s). Each window allows `rate` requests.
+- When `Take()` is called, the pacer shifts the window forward if the current
+  time is past the window end, resetting per-window counters.
+- It computes `requestsLeft` and `timeLeft`, then uses
+  `interval = timeLeft / requestsLeft` to keep the remaining requests evenly
+  spaced over the remaining time.
+- The next target time is `lastRequest + interval` (clamped to now); the caller
+  sleeps until that target. This means spacing adapts if the caller was idle.
+- `WithSlack(n)` allows up to `n` requests per window to skip the spacing delay
+  (still respecting the max requests per window), which helps absorb small
+  bursts without drifting the overall window limit.
+
+`TakeBurst()` enforces the total per-window limit but does not spread requests;
+use it when you only need a hard cap per window and don't care about even
+spacing.
+
 ## Usage
 
 ```go

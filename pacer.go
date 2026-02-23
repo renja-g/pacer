@@ -1,4 +1,17 @@
 // Package pacer provides dynamic request pacing within fixed windows.
+//
+// The pacer enforces a fixed window size (Per, default 1s) with a maximum
+// number of requests per window. Each Take recalculates spacing based on the
+// remaining time and remaining requests in the current window, which keeps
+// requests evenly distributed even after idle gaps.
+//
+// WithSlack allows a limited number of requests per window to skip the spacing
+// delay while still respecting the per-window cap. TakeBurst enforces only the
+// total window cap without spacing.
+//
+// Unlike token bucket or leaky bucket limiters, this pacer does not carry
+// unused capacity across windows; it recalculates spacing to evenly distribute
+// the remaining budget inside the current window.
 package pacer
 
 import (

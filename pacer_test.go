@@ -196,9 +196,9 @@ func TestDynamicPacerReserveSlack(t *testing.T) {
 			windowSize := 10 * time.Second
 			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:      windowSize,
-				windowSizeNanos: windowSize.Nanoseconds(),
-				maxRequests:     2,
+				windowSize:       windowSize,
+				windowSizeNanos:  windowSize.Nanoseconds(),
+				maxRequests:      2,
 				windowStartNanos: windowStartNanos,
 				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
 				slack:            tc.slack,
@@ -267,9 +267,9 @@ func TestDynamicPacerReserve(t *testing.T) {
 			windowSize := 10 * time.Second
 			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:      windowSize,
-				windowSizeNanos: windowSize.Nanoseconds(),
-				maxRequests:     2,
+				windowSize:       windowSize,
+				windowSizeNanos:  windowSize.Nanoseconds(),
+				maxRequests:      2,
 				windowStartNanos: windowStartNanos,
 				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
 			}
@@ -338,9 +338,9 @@ func TestDynamicPacerReserveFutureWindowStart(t *testing.T) {
 			windowSize := 10 * time.Second
 			windowStartNanos := windowStart.UnixNano()
 			pacer := &DynamicPacer{
-				windowSize:      windowSize,
-				windowSizeNanos: windowSize.Nanoseconds(),
-				maxRequests:     2,
+				windowSize:       windowSize,
+				windowSizeNanos:  windowSize.Nanoseconds(),
+				maxRequests:      2,
 				windowStartNanos: windowStartNanos,
 				windowEndNanos:   windowStartNanos + windowSize.Nanoseconds(),
 				requestsDone:     1,
