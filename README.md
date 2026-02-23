@@ -1,6 +1,6 @@
 # pacer
 
-Dynamic request pacing with a fixed window that adapts after idle periods.
+Dynamic request pacing with a fixed window that spreads requests evenly over the window and adapts after idle periods.
 
 ## Usage
 
@@ -28,3 +28,7 @@ Run the demo that mirrors the phased example:
 cd /path/to/pacer
 go run ./cmd/pacer-demo
 ```
+
+## Inspiration
+
+This project is inspired by the rate limiting libraries [go.uber.org/ratelimit](https://pkg.go.dev/go.uber.org/ratelimit) and [golang.org/x/time/rate](https://pkg.go.dev/golang.org/x/time/rate) but implements a different rate limiting algorithm.
